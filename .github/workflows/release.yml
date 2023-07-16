@@ -33,13 +33,19 @@ jobs:
       - name: Build App
         run: npm run build
 
-      - name: Create Release
-        uses: saadmk11/changelog-ci@v1.1.1
+      - name: Generate Changelog
+        id: changelog
+        uses: jaywcjlove/changelog-generator@main
         with:
-          committer_username: ${{ github.actor }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          pull_request_title_regex: '^Release'
-          version_regex: 'v?([0-9]{1,2})+[.]+([0-9]{1,2})+[.]+([0-9]{1,2})\s\(\d{1,2}-\d{1,2}-\d{4}\)'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get Release Date and Author
+        id: release_info
+        run: |
+          release_date=$(git log -1 --format=%aI ${{ github.ref }})
+          release_author=$(git log -1 --format=%an ${{ github.ref }})
+          echo "::set-output name=date::$release_date"
+          echo "::set-output name=author::$release_author"
 
       - name: Create Release
         id: create_release
@@ -47,11 +53,11 @@ jobs:
         with:
           files: |
             'build/*'
-          name: Release ${{ github.ref }}
-          tag_name: ${{ github.ref }}
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.changelog }}
 
-      - name: Create or Update Release Issue
+      - name: Create or Update Release
         if: steps.create_release.outputs.upload_url != ''
         run: |
           release_id="${{ steps.create_release.outputs.id }}"
@@ -59,19 +65,25 @@ jobs:
 
           tag=$(echo "${{ github.ref }}" | sed 's/refs\/tags\///')
           changelog="${{ steps.changelog.outputs.changelog }}"
+          release_date="${{ steps.release_info.outputs.date }}"
+          release_author="${{ steps.release_info.outputs.author }}"
 
-          existing_issue_number=$(curl -s "https://api.github.com/repos/bonnusi/unit-demo-cra/issues?labels=RELEASE&state=open" | jq -r --arg tag "$tag" '.[] | select(.title | contains($tag)) | .number')
+          existing_number=$(curl -s "https://api.github.com/repos/bonnusi/unit-demo-cra/issues?labels=RELEASE&state=open" | jq -r --arg tag "$tag" '.[] | select(.title | contains($tag)) | .number')
 
-          if [ -n "$existing_issue_number" ]; then
-            echo "Updating Release Issue #$existing_issue_number"
-            curl -X PATCH -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"body\": \"$changelog\"}" "https://api.github.com/repos/bonnusi/unit-demo-cra/issues/$existing_issue_number"
+          if [ -n "$existing_number" ]; then
+            echo "Updating Release Issue #$existing_number"
+            body=$(curl -s "https://api.github.com/repos/bonnusi/unit-demo-cra/issues/$existing_number" | jq -r '.body')
+            new_body="$body\n\nAuthor: $release_author\nDate: $release_date\nVersion: $tag\n\n$changelog"
+            curl -X PATCH -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"body\": \"$new_body\"}" "https://api.github.com/repos/bonnusi/unit-demo-cra/issues/$existing_number"
           else
-            echo "Creating Release Issue"
-            curl -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"title\": \"RELEASE: $tag\", \"body\": \"$changelog\"}" "https://api.github.com/repos/bonnusi/unit-demo-cra/issues"
+            echo "Creating Release"
+            new_body="Author: $release_author\nDate: $release_date\nVersion: $tag\n\n$changelog"
+            curl -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"title\": \"RELEASE: $tag\", \"body\": \"$new_body\"}" "https://api.github.com/repos/bonnusi/unit-demo-cra/issues"
           fi
 
       - name: Deploy to gh-pages
         if: success()
         uses: peaceiris/actions-gh-pages@v3
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build
