@@ -2,12 +2,12 @@ name: Release Workflow
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+'
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
         node-version: ['18.x']
@@ -21,15 +21,58 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Unit test
+        run: npm run test-ci
+
+      - name: Install playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: e2e test
+        run: npm run e2e-ci
+
+      - name: Build App
+        run: npm run build
+
+      - name: Create Release
+        uses: saadmk11/changelog-ci@v1.1.1
+        with:
+          committer_username: ${{ github.actor }}
+          release_version: ${{ github.event.inputs.release_version }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          pull_request_title_regex: '^Release'
+          version_regex: 'v?([0-9]{1,2})+[.]+([0-9]{1,2})+[.]+([0-9]{1,2})\s\(\d{1,2}-\d{1,2}-\d{4}\)'
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: |
-            ./CHANGELOG.md
-          draft: false
-          prerelease: false
-      - name: Delete Temporary Changelog File
-        run: rm ./CHANGELOG.md
+            'build/*'
+          name: Release ${{ github.ref }}
+          tag_name: ${{ github.ref }}
+          body: ${{ steps.changelog.outputs.changelog }}
+
+      - name: Create or Update Release Issue
+        if: steps.create_release.outputs.upload_url != ''
+        run: |
+          release_id="${{ steps.create_release.outputs.id }}"
+          echo "Release ID: $release_id"
+
+          tag=$(echo "${{ github.ref }}" | sed 's/refs\/tags\///')
+          changelog="${{ steps.changelog.outputs.changelog }}"
+
+          existing_issue_number=$(curl -s "https://api.github.com/repos/bonnusi/unit-demo-cra/issues?labels=RELEASE&state=open" | jq -r --arg tag "$tag" '.[] | select(.title | contains($tag)) | .number')
+
+          if [ -n "$existing_issue_number" ]; then
+            echo "Updating Release Issue #$existing_issue_number"
+            curl -X PATCH -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"body\": \"$changelog\"}" "https://api.github.com/repos/bonnusi/unit-demo-cra/issues/$existing_issue_number"
+          else
+            echo "Creating Release Issue"
+            curl -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"title\": \"RELEASE: $tag\", \"body\": \"$changelog\"}" "https://api.github.com/repos/bonnusi/unit-demo-cra/issues"
+          fi
+
+      - name: Deploy to gh-pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          publish_dir: ./build
