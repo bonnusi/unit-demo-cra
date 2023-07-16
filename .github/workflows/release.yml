@@ -37,7 +37,6 @@ jobs:
         uses: saadmk11/changelog-ci@v1.1.1
         with:
           committer_username: ${{ github.actor }}
-          release_version: ${{ github.event.inputs.release_version }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           pull_request_title_regex: '^Release'
           version_regex: 'v?([0-9]{1,2})+[.]+([0-9]{1,2})+[.]+([0-9]{1,2})\s\(\d{1,2}-\d{1,2}-\d{4}\)'
