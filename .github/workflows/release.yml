@@ -46,8 +46,10 @@ jobs:
         run: |
           release_date=$(git log -1 --format=%aI ${{ github.ref }})
           release_author=$(git log -1 --format=%an ${{ github.ref }})
+          tag=$(echo "${{ github.ref }}" | sed 's/refs\/tags\///')
           echo "::set-output name=date::$release_date"
           echo "::set-output name=author::$release_author"
+          echo "::set-output name=tag::$tag"
 
       - name: Create Release
         id: create_release
@@ -57,31 +59,11 @@ jobs:
             'build/*'
           name: Release ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body: ${{ steps.changelog.outputs.changelog }}
-
-      - name: Create or Update Release
-        if: steps.create_release.outputs.upload_url != ''
-        run: |
-          release_id="${{ steps.create_release.outputs.id }}"
-          echo "Release ID: $release_id"
-
-          tag=$(echo "${{ github.ref }}" | sed 's/refs\/tags\///')
-          changelog="${{ steps.changelog.outputs.changelog }}"
-          release_date="${{ steps.release_info.outputs.date }}"
-          release_author="${{ steps.release_info.outputs.author }}"
-
-          existing_number=$(curl -s "https://api.github.com/repos/bonnusi/unit-demo-cra/issues?labels=RELEASE&state=open" | jq -r --arg tag "$tag" '.[] | select(.title | contains($tag)) | .number')
-
-          if [ -n "$existing_number" ]; then
-            echo "Updating Release Issue #$existing_number"
-            body=$(curl -s "https://api.github.com/repos/bonnusi/unit-demo-cra/issues/$existing_number" | jq -r '.body')
-            new_body="$body\n\nAuthor: $release_author\nDate: $release_date\nVersion: $tag\n\n$changelog"
-            curl -X PATCH -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"body\": \"$new_body\"}" "https://api.github.com/repos/bonnusi/unit-demo-cra/issues/$existing_number"
-          else
-            echo "Creating Release"
-            new_body="Author: $release_author\nDate: $release_date\nVersion: $tag\n\n$changelog"
-            curl -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"title\": \"RELEASE: $tag\", \"body\": \"$new_body\"}" "https://api.github.com/repos/bonnusi/unit-demo-cra/issues"
-          fi
+          body: |
+            Version: ${{ steps.release_info.outputs.tag }}
+            Author: ${{ steps.release_info.outputs.author }}
+            Date: ${{ steps.release_info.outputs.date }}
+            ${{ steps.changelog.outputs.changelog }}
 
       - name: Deploy to gh-pages
         if: success()
